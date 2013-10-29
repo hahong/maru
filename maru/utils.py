@@ -3,9 +3,13 @@ import sys
 import os
 from multiprocessing import Process, Queue
 from collections import namedtuple
-from mergeutil import Merge, BRReader, PLXReader
+from merge import Merge
+from pymario.brreader import BRReader
+from pymario.plxreader import PLXReader
 from pymworks.data import MWKFile
 
+# ----------------------------------------------------------------------------
+# Common variables
 C_STIM = '#announceStimulus'
 C_MSG = '#announceMessage'
 

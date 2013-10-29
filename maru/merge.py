@@ -31,8 +31,8 @@ class Merge:
     K_VERSPK = 'version_spike_repr'
 
     # public:
-    C_SENT = 'wordout_var'
-    C_RECV = 'wordSent'
+    C_SENT = DEF_CODE_SENT
+    C_RECV = DEF_CODE_RECV
     C_TSTAMP = 'merged_remote_timestamp'
     C_SPIKE = 'merged_spikes'
     C_SPIKEWAV = 'merged_spikes_wave_id%03d'
@@ -423,5 +423,5 @@ def merge(fn_mwk, fn_neu, proc_wav=DEF_PROC_WAV,
             amp_reject=amp_reject,
             _force_timetransf=_force_timetransf)
     if status:
-        print 'merge: merged successfully.'
+        print 'Merged successfully.'
     return status
