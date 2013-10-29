@@ -526,6 +526,11 @@ def set_new_threshold(wavform, thr, n_pre=N_PRE_PT, rng=SEARCH_RNG, i_chg=20):
     return wavnew
 
 
+def set_new_threshold_rng(wav, thr, rng=(11, 13), i_chg=32):
+    return set_new_threshold(wav, thr, rng=rng, i_chg=i_chg)
+    # return set_new_threshold(wav, thr)
+
+
 # -----------------------------------------------------------------------------
 def parse_opts(opts0):
     """Parse the options in the command line.  This somewhat

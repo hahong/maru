@@ -232,8 +232,9 @@ class Merge:
             # including waveforms and electrode name, etc.)
             (t_nsp, dat_nsp, i_nsp) = self.neu_extract_timestamp()
             if len(t_sent) != len(t_recv):
-                warnings.warn('Warning: length mismatch in ITC-loopbacks. '
-                        'Ignoring delay')
+                warnings.warn('Warning: length mismatch in ITC-loopbacks'
+                        '(sent=%d, recv=%d). Ignoring delay' %
+                        (len(t_sent), len(t_recv)))
                 t_recv = t_sent
 
             dat_sent, dat_nsp, t_sent, t_recv, t_nsp, i_nsp = \
