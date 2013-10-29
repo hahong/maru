@@ -7,15 +7,14 @@ from pymworks import data as mdata
 from pymario import brreader, plxreader
 from difflib import SequenceMatcher
 
+# TODO: handle continuous waveform
+
 DEF_CODE_SENT = 'wordout_var'
 DEF_CODE_RECV = 'wordSent'
 DEF_PROC_WAV = False
 DEF_ADJ_REJECT = None
 DEF_AMP_REJECT = None
 DEF_TIMETRANSF = None
-
-
-# TODO: handle continuous waveform
 
 
 class Merge:
