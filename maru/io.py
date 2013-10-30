@@ -8,27 +8,7 @@ import tempfile
 import os
 from .utils import makeavail
 
-N_MAXTRIAL = 35
 N_SLACK = 32
-FKEY = ['_A_', '_M_', '_P_']   # deprecated: not supported anymore
-
-USAGE = \
-"""collect_PS_tinfo.py [options] <out prefix> <in1.psf.pk> [in2.psf.pk] ...
-Collects peri-stimuli spike time info from *.psf.pk (of collect_PS_firing.py).
-The output file is in the hdf5 format.
-
-Options:
-   --n_elec=#            Number of electrodes/channels/units/sites
-   --n_maxtrial=#        Hard maximum of the number of trials
-   --n_img=#             Hard maximum of the number of images/stimuli
-   --n_bins=#            Number of 1ms-bins
-   --t_min=#             Low-bound of the spike time for stimuli
-   --multi               Merge multiple array data (A, M, P) into one output
-   --key=string          Comma separated keys for each array (only w/ --multi)
-   --exclude_img=string  Comma separated image names to be excluded
-   --flist=string        CR separated input psf.pk file list to be added
-   --flistpx=string      (Path) prefix to be added before each line in `flist`
-"""
 
 
 # Housekeeping functions -----------------------------------------------------
@@ -71,210 +51,165 @@ def is_excluded(iid, exclude_img=None):
     return False
 
 
-def save_tinfo_core(dats, outfn, n_img=None, n_maxtrial=N_MAXTRIAL,
+def save_tinfo_core(dat, outfn, n_img=None, n_maxtrial=None,
         n_elec=None, exclude_img=None, n_bins=None, t_min=None, t_max=None,
-        verbose=1, n_slack=N_SLACK, multi=False, fkey=FKEY, t_adjust=None):
-    n_files = len(dats)
+        verbose=1, n_slack=N_SLACK, t_adjust=None):
     iid2idx = {}                         # image id to index (1-th axis) table
     idx2iid = []                         # vice versa
-    initialized = False
-    fns_nominal = []
+    ch2idx = {}
+    idx2ch = []
 
     # prepare tmp file
     fd, tmpf = tempfile.mkstemp()
     os.close(fd)             # hdf5 module will handle the file. close it now.
     save_tinfo_core.tmpf = tmpf
-    proc_cluster = None
-    clus_info = None
     frame_onset = None
 
-    foffset_fnum = []
-    foffset_binnum = []
-    foffset_elidx = []
+    foffset_chidx = []
     foffset_imgidx = []
+    foffset_tridx = []
+    foffset_binidx = []
     foffset_pos = []
 
+    # -- initialization
+    fn_nominal = dat.get('filename', '__none__')
+    fns_nominal = [fn_nominal]  # backward compatibility
+
+    if n_img is None:
+        # if `n_img` is not specified, determine the number of images
+        # from the first psf.pk file. (with additional n_slack)
+        el0 = dat['all_spike'].keys()[0]
+        n_img = len(dat['all_spike'][el0]) + n_slack
+    if n_elec is None:
+        # if `n_elec` is not specified, determine the number of
+        # electrodes from the first psf.pk file.
+        # No additinal n_slack here!
+        n_elec = len(dat['actvelecs'])
+    if n_maxtrial is None:
+        el0 = dat['all_spike'].keys()[0]
+        ii0 = dat['all_spike'][el0].keys()[0]
+        n_maxtrial = len(dat['all_spike'][el0][ii0]) + n_slack
+    if t_min is None:
+        t_min = dat['t_start']
+    if t_max is None:
+        t_max = dat['t_stop']
+    if t_adjust is None:
+        t_adjust = dat['t_adjust']
+    if n_bins is None:
+        n_bins = int(np.ceil((t_max - t_min) / 1000.) + 1)
+
+    # number of bytes required for 1 trial
+    n_bytes = int(np.ceil(n_bins / 8.))
+    shape = (n_elec, n_img, n_maxtrial, n_bytes)
+    shape_org = (n_img, n_elec, n_maxtrial)
+    atom = tables.UInt8Atom()
+    atom16 = tables.Int16Atom()
+    atomu16 = tables.UInt16Atom()
+    atomu32 = tables.UInt32Atom()
+    atom64 = tables.Int64Atom()
+    filters = tables.Filters(complevel=4, complib='blosc')
+
+    save_tinfo_core.h5t = h5t = tables.openFile(tmpf, 'w')
+    db = h5t.createCArray(h5t.root, 'db',
+            atom, shape, filters=filters)    # spiking information
+    org = h5t.createCArray(h5t.root, 'org',
+            atom16, shape_org, filters=filters)   # origin info
+    org[...] = -1
+    tr = np.zeros((n_elec, n_img),
+            dtype=np.uint16)    # num of trials per each ch & image
+
+    if verbose > 0:
+        print '* Allocated: (n_elec,'\
+            ' n_img, n_maxtrial, n_bytes) = (%d, %d, %d, %d)' % shape
+        print '* Temp hdf5:', tmpf
+
+    # ----------------------------------------------------------------------
     # -- read thru the dats, store into the tmp.hdf5 file (= tmpf)
-    for i_f, dat in enumerate(dats):
-        fn_nominal = dat.get('filename', '__none__')
-        fns_nominal.append(fn_nominal)
+    # -- actual conversion for this file happens here
+    for ch in sorted(dat['all_spike']):
+        makeavail(ch, ch2idx, idx2ch)
+        ie = ch2idx[ch]   # index to the electrode, 0-based
 
         if verbose > 0:
-            print 'At (%d/%d): %s' % (i_f + 1, n_files, fn_nominal)
+            print '* At: Ch/site/unit %d                          \r' % ie,
+            sys.stdout.flush()
 
-        if proc_cluster is None:
-            if 'max_clus' in dat and 'clus_info' in dat:
-                proc_cluster = True
-                max_clus = dat['max_clus']
-                clus_info = dat['clus_info']
-                print '* Collecting cluster info'
-            else:
-                proc_cluster = False
-        elif proc_cluster:
-            # DEPRECATED
-            clus_info0 = dat['clus_info']
-            for k in clus_info0:
-                if k not in clus_info:
-                    clus_info[k] = clus_info0[k]
-                    continue
-                assert clus_info[k]['nclusters'] == \
-                        clus_info0[k]['nclusters']
-                assert clus_info[k]['unsorted_cid'] == \
-                        clus_info0[k]['unsorted_cid']
-                clus_info[k]['nbad_isi'] += clus_info0[k]['nbad_isi']
-                clus_info[k]['nspk'] += clus_info0[k]['nspk']
+        for iid in sorted(dat['all_spike'][ch]):
+            # -- main computation
+            if is_excluded(iid, exclude_img):
+                continue
 
-        # -- initialization
-        if not initialized:
-            if n_img is None:
-                # if `n_img` is not specified, determine the number of images
-                # from the first psf.pk file. (with additional n_slack)
-                el0 = dat['all_spike'].keys()[0]
-                n_img = len(dat['all_spike'][el0]) + n_slack
-            if n_elec is None:
-                # if `n_elec` is not specified, determine the number of
-                # electrodes from the first psf.pk file.
-                # No additinal n_slack here!
-                n_elec = len(dat['actvelecs'])
-                # multi is now deprecated.
-                if multi:              # if multiple array data are processed..
-                    n_elec1 = n_elec   # number of electrode/ch per one array
-                    n_elec *= len(fkey)
-            if t_min is None:
-                t_min = dat['t_start']
-            if t_max is None:
-                t_max = dat['t_stop']
-            if t_adjust is None:
-                t_adjust = dat['t_adjust']
-            if n_bins is None:
-                n_bins = t_max - t_min + 1
+            # do the conversion
+            makeavail(iid, iid2idx, idx2iid)
+            ii = iid2idx[iid]      # index to the image, 0-based
+            trials = dat['all_spike'][ch][iid]   # get the chunk
+            foffsets = None
+            if 'all_foffset' in dat:
+                foffsets = dat['all_foffset'][ch][iid]
+                if len(trials) != len(foffsets):
+                    foffsets = None
 
-            # number of bytes required for 1 trial
-            n_bytes = int(np.ceil(n_bins / 8.))
-            shape = (n_elec, n_img, n_maxtrial, n_bytes)
-            shape_org = (n_img, n_elec, n_maxtrial)
-            atom = tables.UInt8Atom()
-            atom16 = tables.Int16Atom()
-            filters = tables.Filters(complevel=4, complib='blosc')
+            ntr0 = len(trials)     # number of trials in the chunk
+            itb = tr[ie, ii]       # index to the beginning trial#, 0-based
+            ite = itb + ntr0       # index to the end
+            n_excess = 0           # number of excess trials in this chunk
+            if ite > n_maxtrial:
+                n_excess = ite - n_maxtrial
+                ite = n_maxtrial
+                if verbose > 0:
+                    print '** Reached n_maxtrial(=%d): ch=%s, iid=%s' % \
+                            (n_maxtrial, str(ch), str(iid))
+            # number of actual trials to read in the chunk
+            ntr = ntr0 - n_excess
+            # bit-like spike timing info
+            tr_bits = np.zeros((ntr, n_bytes * 8), dtype=np.uint8)
 
-            save_tinfo_core.h5t = h5t = tables.openFile(tmpf, 'w')
-            db = h5t.createCArray(h5t.root, 'db',
-                    atom, shape, filters=filters)    # spiking information
-            org = h5t.createCArray(h5t.root, 'org',
-                    atom16, shape_org, filters=filters)   # origin info
-            org[...] = -1
-            tr = np.zeros((n_elec, n_img),
-                    dtype=np.uint16)    # num of trials per each ch & image
-            initialized = True
+            # sweep the chunk, and bit-pack the data
+            trials = trials[:ntr]
+            trials_enum = np.concatenate([[i] * len(e)
+                    for i, e in enumerate(trials)])
+            trials = np.concatenate(trials)
 
-            if verbose > 0:
-                print '* Allocated: (n_elec,'\
-                    ' n_img, n_maxtrial, n_bytes) = (%d, %d, %d, %d)' % shape
-                print '* Temp hdf5:', tmpf
+            # selected bins
+            sb = np.round((trials - t_min) / 1000.).astype('int')
+            si = np.nonzero((sb >= 0) & (sb < n_bins))[0]
+            sb = sb[si]
+            st = trials_enum[si]
+            tr_bits[st, sb] = 1   # there was a spike
+            spk = np.packbits(tr_bits, axis=1)
 
-        # bit-like spike timing info in one trial
-        tr_bits = np.zeros((n_bytes * 8), dtype=np.uint8)
-        eo = 0    # electrode offset (0-based)
-        if multi:
-            # multi is now DEPRECATED.
-            found = False
-            for i_k, k in enumerate(fkey):
-                if k in fn_nominal:
-                    found = True
-                    break
-            if not found:
-                print '** Not matching file name:', fn_nominal
-            eo = n_elec1 * i_k
-            if verbose > 0:
-                print '* Electrode offset: %d           ' % eo
+            if foffsets is not None:
+                foffsets = np.concatenate(foffsets)
+                if len(foffsets) != len(trials):
+                    # shouldn't happen
+                    print '** Length of foffsets and trials is different'
+                    foffsets = [-1] * len(trials)
+                    foffsets = np.array(foffsets)
 
-        # -- actual conversion for this file
-        for el in sorted(dat['all_spike']):
-            fill_blank = False
-            if proc_cluster:
-                # DEPRECATED
-                # ie: index to the electrode, 0-based
-                ie = (el[0] - 1 + eo) * max_clus + el[1]
-                if el not in clus_info:
-                    ch1, i_unit = el
-                    if i_unit >= clus_info[(ch1, 0)]['nclusters']:
-                        continue
+                nevs = len(sb)
+                foffset_chidx.extend([ie] * nevs)
+                foffset_imgidx.extend([ii] * nevs)
+                foffset_tridx.extend(st)
+                foffset_binidx.extend(sb)
+                foffset_pos.extend(foffsets[si])
 
-                    if verbose:
-                        print '* Filling blanks:', el
-                    fill_blank = True
+            # finished this image in this electrode; store the data
+            db[ie, ii, itb:ite, :] = spk
+            org[ii, ie, itb:ite] = 0   # mainly for backward compatibility
+            tr[ie, ii] += ntr
 
-            else:
-                ie = el - 1 + eo  # index to the electrode, 0-based
-            if verbose > 0:
-                print '* At: Ch/site/unit %d                          \r' % ie,
-                sys.stdout.flush()
+    # -- additional movie data conversion
+    # XXX: this assumes `multi=False`
+    if 'frame_onset' in dat and len(dat['frame_onset']) > 0:
+        print '* Collecting frame onset info'
+        if frame_onset is None:
+            frame_onset = dat['frame_onset']
+        else:
+            frame_onset0 = dat['frame_onset']
+            for iid in frame_onset0:
+                frame_onset[iid].extend(frame_onset0[iid])
 
-            for iid in sorted(dat['all_spike'][el]):
-                # -- main computation
-                if is_excluded(iid, exclude_img):
-                    continue
-
-                # do the conversion
-                makeavail(iid, iid2idx, idx2iid)
-                ii = iid2idx[iid]      # index to the image, 0-based
-                trials = dat['all_spike'][el][iid]   # get the chunk
-                foffsets = None
-                if 'all_foffset' in dat:
-                    foffsets = dat['all_foffset'][el][iid]
-                    if len(trials) != len(foffsets):
-                        foffsets = None
-
-                ntr0 = len(trials)     # number of trials in the chunk
-                itb = tr[ie, ii]       # index to the beginning trial#, 0-based
-                ite = itb + ntr0       # index to the end
-                n_excess = 0           # number of excess trials in this chunk
-                if ite > n_maxtrial:
-                    n_excess = ite - n_maxtrial
-                    ite = n_maxtrial
-                    if verbose > 0:
-                        print '** Reached n_maxtrial(=%d): el=%d, iid=%s' % \
-                                (n_maxtrial, el, str(iid))
-                # number of actual trials to read in the chunk
-                ntr = ntr0 - n_excess
-                # temprary spike conut holder
-                spk = np.zeros((ntr, n_bytes), dtype=np.uint8)
-
-                if not fill_blank:
-                    # sweep the chunk, and bit-pack the data
-                    for i in xrange(ntr):
-                        trial = trials[i]
-                        tr_bits[:] = 0
-
-                        # bit-pack all the spiking times in `trial`
-                        for t0 in trial:
-                            # t0: spiking time relative to the
-                            # onset of the stimulus
-                            # The following converts us -> ms
-                            # 0 at t_min
-                            t = int(np.round((t0 - t_min) / 1000.))
-                            if t < 0 or t >= n_bins:
-                                continue
-                            tr_bits[t] = 1   # set the bit
-
-                        spk[i, :] = np.packbits(tr_bits)
-
-                # finished this image in this electrode; store the data
-                db[ie, ii, itb:ite, :] = spk
-                org[ii, ie, itb:ite] = i_f
-                tr[ie, ii] += ntr
-
-        # -- additional movie data conversion
-        # XXX: this assumes `multi=False`
-        if 'frame_onset' in dat and len(dat['frame_onset']) > 0:
-            print '* Collecting frame onset info'
-            if frame_onset is None:
-                frame_onset = dat['frame_onset']
-            else:
-                frame_onset0 = dat['frame_onset']
-                for iid in frame_onset0:
-                    frame_onset[iid].extend(frame_onset0[iid])
-
+    # ----------------------------------------------------------------------
     # -- finished main conversion; now save into a new optimized hdf5 file
     n_img_ac = len(iid2idx)   # actual number of images
     n_tr_ac = np.max(tr)      # actual maximum number of trials
@@ -314,16 +249,22 @@ def save_tinfo_core(dats, outfn, n_img=None, n_maxtrial=N_MAXTRIAL,
     h5o.createArray(meta, 't_start0', t_min)
     h5o.createArray(meta, 'tmin', t_min)         # backward compatibility
     h5o.createArray(meta, 't_stop0', t_max)
-    h5o.createArray(meta, 't_stop0', t_max)
+    h5o.createArray(meta, 'tmax', t_max)         # backward compatibility
     h5o.createArray(meta, 't_adjust', t_adjust)
     h5o.createArray(meta, 'iid2idx_pk', pk.dumps(iid2idx))
     h5o.createArray(meta, 'idx2iid_pk', pk.dumps(idx2iid))
     h5o.createArray(meta, 'idx2iid', idx2iid)
+    h5o.createArray(meta, 'ch2idx_pk', pk.dumps(ch2idx))
+    h5o.createArray(meta, 'idx2ch', idx2ch)
     # save as img-major order (tr is in channel-major)
     h5o.createArray(meta, 'ntrials_img', tr[:, :n_img_ac].T)
     h5o.createArray(meta, 'frame_onset_pk', pk.dumps(frame_onset))
+    # cluster related stuffs
+    for clu_k in ['idx2gcid', 'cid_sel', 'gcid2idx']:
+        if clu_k not in dat:
+            continue
+        h5o.createArray(meta, clu_k + '_pk', pk.dumps(dat[clu_k]))
     # this is deprecated.  mainly for backward compatibility
-    h5o.createArray(meta, 'clus_info_pk', pk.dumps(clus_info))
     orgfile[...] = org[:n_img_ac, :, :n_tr_ac]
 
     # populate /meta/iididx
@@ -350,6 +291,26 @@ def save_tinfo_core(dats, outfn, n_img=None, n_maxtrial=N_MAXTRIAL,
     if verbose > 0:
         print
 
+    # foffset stuffs
+    foffset_chidx = np.array(foffset_chidx, dtype='uint16')
+    foffset_imgidx = np.array(foffset_imgidx, dtype='uint32')
+    foffset_tridx = np.array(foffset_tridx, dtype='uint16')
+    foffset_binidx = np.array(foffset_binidx, dtype='uint16')
+    foffset_pos = np.array(foffset_pos, dtype='int64')
+
+    for src, name, atom0 in zip(
+            [foffset_chidx, foffset_imgidx, foffset_tridx,
+                foffset_binidx, foffset_pos],
+            ['foffset_chidx', 'foffset_imgidx', 'foffset_tridx',
+                'foffset_binidx', 'foffset_pos'],
+            [atomu16, atomu32, atomu16, atomu16, atom64]
+            ):
+        if len(src) == 0:
+            continue
+        dst = h5o.createCArray(meta, name,
+            atom0, src.shape, filters=filters)
+        dst[:] = src[:]
+
     h5o.close()
     h5t.close()
 save_tinfo_core.tmpf = None
@@ -357,13 +318,13 @@ save_tinfo_core.h5o = None
 save_tinfo_core.h5t = None
 
 
-def save_tinfo(dats, outfn, n_img=None, n_maxtrial=N_MAXTRIAL,
+def save_tinfo(dat, outfn, n_img=None, n_maxtrial=None,
         n_elec=None, exclude_img=None, n_bins=None, t_min=None,
-        verbose=1, n_slack=N_SLACK, multi=False, fkey=FKEY):
+        verbose=1, n_slack=N_SLACK):
     try:
         signal.signal(signal.SIGINT, save_tinfo_signal_handler)
         signal.signal(signal.SIGTERM, save_tinfo_signal_handler)
-        save_tinfo_core(dats, outfn, multi=multi, fkey=fkey,
+        save_tinfo_core(dat, outfn,
                 exclude_img=exclude_img, n_maxtrial=n_maxtrial, n_bins=n_bins)
     finally:
         save_tinfo_cleanup()
