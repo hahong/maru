@@ -12,6 +12,7 @@ from pymario.plxreader import PLXReader
 from pymworks.data import MWKFile
 from .utils import makeavail, set_new_threshold
 from .merge import Merge
+from .io import save_tinfo
 
 C_STIM = '#announceStimulus'
 C_MSG = '#announceMessage'
@@ -133,8 +134,10 @@ def get_PS_firrate(fn_mwk, fn_out,
            'all_foffset': all_foffset,
            'frame_onset': frame_onset}
     if save_pkl:
-        # old-format: slow and inefficient
+        # old-format: slow and inefficient and not supported
         pk.dump(out, open(fn_out, 'wb'))
+    else:
+        save_tinfo(fn_out, 'test2.h5')
 
 
 # ----------------------------------------------------------------------------

@@ -51,7 +51,7 @@ def is_excluded(iid, exclude_img=None):
     return False
 
 
-def save_tinfo_core(dat, outfn, n_img=None, n_maxtrial=None,
+def save_tinfo_core(dat, outfn, n_img=None, n_maxtrial=None, save_spktch=False,
         n_elec=None, exclude_img=None, n_bins=None, t_min=None, t_max=None,
         verbose=1, n_slack=N_SLACK, t_adjust=None):
     iid2idx = {}                         # image id to index (1-th axis) table
@@ -230,9 +230,6 @@ def save_tinfo_core(dat, outfn, n_img=None, n_maxtrial=None,
     # /spktimg: bit-packed spike-time info matrix, image-id-major
     spktimg = h5o.createCArray(h5o.root, 'spkt_img',
             atom, shape_img, filters=filters)
-    # /spktch: bit-packed spike-time info matrix, channel-major
-    spktch = h5o.createCArray(h5o.root, 'spkt_ch',
-            atom, shape_ch, filters=filters)
     # /meta: metadata group
     meta = h5o.createGroup("/", 'meta', 'Metadata')
     # /meta/iid2idx: iid to matrix-index info
@@ -283,13 +280,15 @@ def save_tinfo_core(dat, outfn, n_img=None, n_maxtrial=None,
             sys.stdout.flush()
         spktimg[i, :, :, :] = db[:, i, :n_tr_ac, :]
 
-    for i in xrange(n_elec):
-        if verbose > 0:
-            print '* At: Ch/site/unit %d                   \r' % i,
-            sys.stdout.flush()
-        spktch[i, :, :, :] = db[i, :n_img_ac, :n_tr_ac, :]
-    if verbose > 0:
-        print
+    if save_spktch:
+        # /spktch: bit-packed spike-time info matrix, channel-major
+        spktch = h5o.createCArray(h5o.root, 'spkt_ch',
+                atom, shape_ch, filters=filters)
+        for i in xrange(n_elec):
+            if verbose > 0:
+                print '* At: Ch/site/unit %d                   \r' % i,
+                sys.stdout.flush()
+            spktch[i, :, :, :] = db[i, :n_img_ac, :n_tr_ac, :]
 
     # foffset stuffs
     foffset_chidx = np.array(foffset_chidx, dtype='uint16')
@@ -310,6 +309,9 @@ def save_tinfo_core(dat, outfn, n_img=None, n_maxtrial=None,
         dst = h5o.createCArray(meta, name,
             atom0, src.shape, filters=filters)
         dst[:] = src[:]
+
+    if verbose > 0:
+        print
 
     h5o.close()
     h5t.close()
