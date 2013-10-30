@@ -6,7 +6,7 @@ import tables
 import signal
 import tempfile
 import os
-from .utils import makeavail
+from ..utils import makeavail
 
 N_SLACK = 32
 

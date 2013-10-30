@@ -37,7 +37,7 @@ Options:
                              the names
    --wav=<.nev file name>    collects waveform for **spike sorting** with the
                              .nev file.  This produces a specialized outputs.
-   --pkl                     save as pickle format (not recommended, and
+   --pkl                     save as pickle format (HIGHLY DISCOURAGED, and
                              "--wav" does not support this)
 """
 

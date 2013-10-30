@@ -12,7 +12,7 @@ from pymario.plxreader import PLXReader
 from pymworks.data import MWKFile
 from .utils import makeavail, set_new_threshold
 from .merge import Merge
-from .io import save_tinfo
+from .io.tinfo import save_tinfo
 
 C_STIM = '#announceStimulus'
 C_MSG = '#announceMessage'
