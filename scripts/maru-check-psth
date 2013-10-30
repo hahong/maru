@@ -210,7 +210,7 @@ def plot_all(db, pp, n_bins=None, t_begin=-100000, log='log.tmp',
 
 def main():
     if len(sys.argv) < 3:
-        print 'plot_PSTH.py <out prefix> <in1.psf.pk> [in2.psf.pk] ...'
+        print 'maru-check-psth <out prefix> <in1.psf.pk> [in2.psf.pk] ...'
         print
         print 'Options:'
         print '  --n_bins=#       Number of 1-ms bins'
