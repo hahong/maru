@@ -37,7 +37,7 @@ Options:
                              the names
    --wav=<.nev file name>    collects waveform for **spike sorting** with the
                              .nev file.  This produces a specialized outputs.
-   --pkl                     save as pickle format (HIGHLY DISCOURAGED, and
+   --pkl                     save pickle format as well (HIGHLY DISCOURAGED, and
                              "--wav" does not support this)
 """
 
@@ -261,9 +261,9 @@ def psinfo_main(args):
         print '* Shifting based on this rule:', ch_shift
 
     save_pkl = False
-    if 'save_pkl' in opts:
+    if 'save_pkl' in opts or 'pkl' in opts:
         save_pkl = True
-        print '* Save as pickle format'
+        print '* Save pickle format'
 
     # -- go go go
     kwargs = {'override_delay_us': override_delay_us,
