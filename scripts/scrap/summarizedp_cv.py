@@ -166,12 +166,14 @@ def pick_top(db, topn, bad=[], ng=[], prndp=False, px=PREF):
         pk.dump({'dp': rdp, 'ch0': rch0, 'arr': rarr}, open(px+'_sorted128.pk', 'wb'))
 
 # ----
-def load_all(files):
+def load_all(files, skipchk=False):
     db = {}
     for f in files:
         offset = len(db)
         db0 = pk.load(open(f))
         for ch in db0:
+            if not skipchk:
+                assert all([all(np.isfinite(db0[ch][k])) for k in db0[ch]])
             db[ch + offset] = db0[ch]
 
     return db
@@ -228,7 +230,7 @@ def main(rseed=RSEED):
             prndp = True
             print '* PRNDP'
         if 'topn' in opts:
-            topn = int(opts('topn'))
+            topn = int(opts['topn'])
             print '* TOPN =', topn
         if 'bad' in opts:
             bad = [int(b) for b in opts['bad'].split(',')]
@@ -241,7 +243,7 @@ def main(rseed=RSEED):
             print '* PX =', px
 
         files = args[1:]
-        db = load_all(files)
+        db = load_all(files, skipchk=True)
         pick_top(db, topn, bad=bad, ng=ng, prndp=prndp, px=px)
         
         if doplot:
