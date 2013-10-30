@@ -132,7 +132,8 @@ def get_PS_firrate(fn_mwk, fn_out,
            't_adjust': t_adjust,
            'actvelecs': actvelecs,
            'all_foffset': all_foffset,
-           'frame_onset': frame_onset}
+           'frame_onset': frame_onset,
+           'filename': fn_mwk}
     if save_pkl:
         # old-format: slow and inefficient and not supported
         pk.dump(out, open(fn_out, 'wb'))

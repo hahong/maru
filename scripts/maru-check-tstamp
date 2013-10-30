@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
 import sys
-from mergeutil import Merge, BRReader
+from pymario.brreader import BRReader
+
 
 # ------------
 def chk(fn, until=15, slack=0.3):
@@ -20,11 +21,12 @@ def chk(fn, until=15, slack=0.3):
     # ===
     while t < until:
         dat = br.read_once()
-        if dat == None: break
-        
+        if dat is None:
+            break
+
         # chk whether there's a time reset
         t_new = dat['timestamp'] / 1000000.   # us -> s
-        if t_new < t: 
+        if t_new < t:
             ts_reset += 1
             tstamps_set.append(tstamps)
             tstamps = []
@@ -36,7 +38,7 @@ def chk(fn, until=15, slack=0.3):
     tstamps_set.append(tstamps)
 
     # === All done
-    if ts_reset == 0: 
+    if ts_reset == 0:
         sout += 'All OK.'
     else:
         ts_reset_t = max(ts_reset_ts)
@@ -54,7 +56,8 @@ def chk(fn, until=15, slack=0.3):
 
             if len(tstamps_after) > 0:
                 if tstamps_after[0] - slack < ts_reset_t:
-                    sout += 'potential interference: ' +  str(tstamps_after[0] - ts_reset_t)
+                    sout += 'potential interference: ' +  \
+                            str(tstamps_after[0] - ts_reset_t)
                 else:
                     sout += 'OK'
             else:
@@ -70,10 +73,11 @@ def chk(fn, until=15, slack=0.3):
     print ts_reset_t, tstamps_after, tstamps_set
     print sout
 
+
 # ------------
 def main():
     if len(sys.argv) == 1:
-        print 'chk_tstamp_corruption.py <nev file name>'
+        print 'maru-check-tstamp <nev file name>'
         return
     chk(sys.argv[1])
 

@@ -2,7 +2,7 @@
 
 import sys
 import numpy as np
-from common_fn import parse_opts2
+from maru.utils import parse_opts2
 
 ELECS = range(1, 97)
 
@@ -54,7 +54,7 @@ def cmp_impedance_all(files, plot=None):
         fmt = '%3d' + '\t%1.3f (Ch %2d)' * len(row)
         print fmt % ((i_rank + 1,) + tuple(np.ravel(row)))
 
-    if plot != None:
+    if plot is not None:
         from matplotlib import use
         use('pdf')
         import pylab as pl
@@ -75,9 +75,10 @@ def cmp_impedance_all(files, plot=None):
 
 def main():
     if len(sys.argv) < 3:
-        print 'cmp_impedance.py [opts] <impedance log 1a.txt> <impedance log' \
+        print 'maru-check-impedance [opts] <impedance log 1a.txt> <impedance log' \
                 '1b.txt> [<log 2a.txt> <log 2b.txt>] ...'
-        print 'cmp_impedance.py: compare pairs of impedance log files.'
+        print
+        print 'Compare pairs of impedance log files.'
         print 'Options:'
         print '   --plot=<filename.pdf>'
         return
