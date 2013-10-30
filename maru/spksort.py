@@ -10,7 +10,8 @@ from scipy import stats as st
 from joblib import Parallel, delayed
 from sklearn.cluster import AffinityPropagation
 from sklearn.neighbors import NearestNeighbors
-from common_fn import parse_opts2, detect_cpus
+from .utils import detect_cpus
+from .io.tinfo import save_tinfo
 
 # -- defaults for feature computation
 RETHRESHOLD_MULT = -2.5
@@ -47,65 +48,11 @@ NN_NNEIGH = 5         # the number of neighbors
 NN_RADIUS = 1.
 
 # -- other defaults
-NCPU = detect_cpus()  # all CPUs
-NCPU_LOWLOAD = 4      # for memory intensive tasks
+NCPU = detect_cpus()             # all CPUs
+NCPU_LOWLOAD = max(NCPU / 4, 1)  # for memory intensive tasks
 UNSORTED = 0
 BADIDX = -1
 ATOL = 1e-4
-
-USAGE = \
-"""spksort.py: a spike sorting swiss army knife
-
-Feature Computing Mode
-======================
-Computes feautures of spikes for later clustering after the
-re-thresholding (Quiroga et al., 2004) and the spike alignment.
-
-spksort.py feature [options] <input.psf.h5> <output.c1.feat.h5>
-
-Options:
-   --with=<reference.h5> Use the parameters used in the reference file
-                         (another feature output.c1.feat.h5 file).
-   --rethreshold_mult=#  The multiplier for Quiroga's thresholding method
-   --align_subsmp=#
-   --align_maxdt=#
-   --align_peakloc=#
-   --align_findbwd=#
-   --align_findfwd=#
-   --align_cutat=#
-   --align_outdim=#
-   --feat_metd=<str>     The method used to extract features.  Available:
-                         wavelet
-   --njobs=#             The number of worker processes
-
-
-Clustering Mode
-===============
-Cluster spikes using pre-computed features.
-
-spksort.py cluster [options] <input.c1.feat.h5> <output.c2.clu.h5>
-
-Options:
-   --cluster_alg=<str>   The clustering algorithm to use.  Avaliable:
-                         affinity_prop
-   --feat_kssort=<bool>
-   --feat_outdim=#
-   --feat_wavelet_lev=#
-   --skimspk_tb=#        Beginning relative time for collecting examplar spikes
-   --skimspk_te=#        End time for examplar spikes
-   --extract_nperimg=#   The max number of spikes collected for each stimulus
-   --qc_minsnr=#         Minimum SNR to be qualified as a cluster
-   --qc_ks_plevel=#      Desired significance level for the KS-test
-   --njobs=#             The number of worker processes
-   --ref=<reference.h5>  Use the specified file for clustering
-
-
-Collation Mode
-==============
-(Optional) Find out common clusters in multiple .c2.clu.h5 files.
-
-spksort.py [options] collate <input1.c2.clu.h5> [input2.c2.clu.h5] ...
-"""
 
 
 # -- House-keeping stuffs -----------------------------------------------------
@@ -926,8 +873,14 @@ def _get_good_clu(clu_sig_q):
     return res1, res2, res3
 
 
-def collate(fn_inp, fn_out, opts):
+def collate(fn_inp, fn_out, opts, save_pkl=False):
     """EXPERIMENTAL!!!!  EXPECT BUGS!!!"""
+
+    print
+    print '****************************************'
+    print '*** foffsets are not yet supported!! ***'
+    print '****************************************'
+    print
 
     reference = None
     # -- process opts
@@ -1011,7 +964,6 @@ def collate(fn_inp, fn_out, opts):
     # -- done
     h5.close()
 
-    f = open(fn_out, 'w')
     out = {'all_spike': all_spike,
            't_start': t_start0,
            't_stop': t_stop0,
@@ -1021,31 +973,9 @@ def collate(fn_inp, fn_out, opts):
            'cid_sel': cid_sel,
            'gcid2idx': gcid2idx
            }
-    pk.dump(out, f)
-    f.close()
-
-
-# ----------------------------------------------------------------------------
-def main():
-    if len(sys.argv) < 3:
-        print USAGE
-        return
-
-    args, opts = parse_opts2(sys.argv[1:])
-    mode = args[0]
-
-    # -- parsing extra arguments (mainly for backward compatibility)
-    if mode == 'feature':
-        get_features(args[1], args[2], opts)
-    elif mode == 'cluster':
-        cluster(args[1], args[2], opts)
-    elif mode == 'collate':
-        collate(args[1], args[2], opts)
+    # XXX: need to add foffsets
+    if save_pkl:
+        # old-format: slow and inefficient and not supported
+        pk.dump(out, open(fn_out, 'wb'))
     else:
-        raise ValueError('Invalid mode')
-
-    print 'Done.                                '
-
-
-if __name__ == '__main__':
-    main()
+        save_tinfo(out, fn_out)

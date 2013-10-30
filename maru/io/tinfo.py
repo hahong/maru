@@ -29,7 +29,7 @@ def save_tinfo_cleanup():
 def save_tinfo_signal_handler(sig, frame):
     print 'Got abort signal...'
     save_tinfo_cleanup()
-    sys.exit(0)
+    sys.exit(1)
 
 
 # Main working functions -----------------------------------------------------

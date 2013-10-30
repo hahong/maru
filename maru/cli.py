@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import warnings
 import os
-from .utils import parse_opts_adapter
+from .utils import parse_opts_adapter, parse_opts2
 
 MERGE_USAGE = \
 """
@@ -39,6 +39,63 @@ Options:
                              .nev file.  This produces a specialized outputs.
    --pkl                     save as pickle format (HIGHLY DISCOURAGED, and
                              "--wav" does not support this)
+"""
+
+SPKSORT_USAGE = \
+"""${PNAME}: a spike sorting swiss army knife
+
+Feature Computing Mode
+======================
+Computes feautures of spikes for later clustering after the
+re-thresholding (Quiroga et al., 2004) and the spike alignment.
+
+${PNAME} feature [options] <input.psf.h5> <output.c1.feat.h5>
+
+Options:
+   --with=<reference.h5> Use the parameters used in the reference file
+                         (another feature output.c1.feat.h5 file).
+   --rethreshold_mult=#  The multiplier for Quiroga's thresholding method
+   --align_subsmp=#
+   --align_maxdt=#
+   --align_peakloc=#
+   --align_findbwd=#
+   --align_findfwd=#
+   --align_cutat=#
+   --align_outdim=#
+   --feat_metd=<str>     The method used to extract features.  Available:
+                         wavelet
+   --njobs=#             The number of worker processes
+
+
+Clustering Mode
+===============
+Cluster spikes using pre-computed features.
+
+${PNAME} cluster [options] <input.c1.feat.h5> <output.c2.clu.h5>
+
+Options:
+   --cluster_alg=<str>   The clustering algorithm to use.  Avaliable:
+                         affinity_prop
+   --feat_kssort=<bool>
+   --feat_outdim=#
+   --feat_wavelet_lev=#
+   --skimspk_tb=#        Beginning relative time for collecting examplar spikes
+   --skimspk_te=#        End time for examplar spikes
+   --extract_nperimg=#   The max number of spikes collected for each stimulus
+   --qc_minsnr=#         Minimum SNR to be qualified as a cluster
+   --qc_ks_plevel=#      Desired significance level for the KS-test
+   --njobs=#             The number of worker processes
+   --ref=<reference.h5>  Use the specified file for clustering
+
+
+Collation Mode
+==============
+Find out common clusters in multiple .c2.clu.h5 files and save the final
+sorted spikes as .psf.h5 format.
+
+***NOTE: multiple files are not supported yet!!!***
+
+${PNAME} collate [options] <input1.c2.clu.h5> <output.psf.h5>
 """
 
 
@@ -228,6 +285,36 @@ def psinfo_main(args):
         raise ValueError('Invalid mode')
 
     print 'Done.                                '
+    return 0
+
+
+def spksort_main(args):
+    from .spksort import get_features, cluster, collate
+
+    print
+    print '*********************************************'
+    print '*** Many parts are not yet implemented!!  ***'
+    print '*********************************************'
+    print
+    pname = get_entry_name(args[0])
+    args, opts = parse_opts2(args[1:])
+    if len(args) < 3:
+        print SPKSORT_USAGE.replace('${PNAME}', pname)
+        return 1
+    mode = args[0]
+
+    # -- parsing extra arguments (mainly for backward compatibility)
+    if mode == 'feature':
+        get_features(args[1], args[2], opts)
+    elif mode == 'cluster':
+        cluster(args[1], args[2], opts)
+    elif mode == 'collate':
+        collate(args[1], args[2], opts)
+    else:
+        raise ValueError('Invalid mode')
+
+    print 'Done.                                '
+    return 0
 
 
 def get_entry_name(arg0):

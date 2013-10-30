@@ -138,7 +138,7 @@ def get_PS_firrate(fn_mwk, fn_out,
         # old-format: slow and inefficient and not supported
         pk.dump(out, open(fn_out, 'wb'))
     else:
-        save_tinfo(fn_out, 'test2.h5')
+        save_tinfo(out, fn_out)
 
 
 # ----------------------------------------------------------------------------
