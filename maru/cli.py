@@ -106,12 +106,12 @@ def psinfo_main(args):
     from .peristiminfo import (DEFAULT_ELECS, C_SUCCESS, T_SUCCESS, T_START,
             T_STOP, REJECT_SLOPPY, get_PS_firrate, get_PS_waveform)
     pname = get_entry_name(args[0])
+    args, opts = parse_opts_adapter(args[1:], 4)
 
-    if len(args) < 3:
+    if len(args) < 2:
         print PSINFO_USAGE.replace('${PNAME}', pname)
         return 1
 
-    args, opts = parse_opts_adapter(args[1:], 4)
     fn_mwk = args[0]
     fn_out = args[1]
     fn_nev = None
