@@ -136,7 +136,10 @@ def get_PS_firrate(fn_mwk, fn_out,
            'filename': fn_mwk}
     if save_pkl:
         # old-format: slow and inefficient and not supported
-        pk.dump(out, open(fn_out, 'wb'))
+        fn_out_pkl = fn_out.replace('.h5', '.pkl')
+        if fn_out_pkl == fn_out:
+            fn_out_pkl += '.pkl'
+        pk.dump(out, open(fn_out_pkl, 'wb'))
     else:
         save_tinfo(out, fn_out)
 
