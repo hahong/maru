@@ -4,6 +4,7 @@ import sys
 import numpy as np
 import tables as tbl
 from matplotlib import rc, use
+import cPickle as pk
 use('pdf')
 from matplotlib.backends.backend_pdf import PdfPages
 import pylab as pl
@@ -24,7 +25,11 @@ def load_db(files, db, verbose=1):
         spktimg = h5.root.spkt_img.read()
         ntrials = h5.root.meta.ntrials_img.read()
         n_img, n_elec, _, _ = spktimg.shape
-        iids = h5.root.meta.idx2iid.read()
+        try:
+            iids = h5.root.meta.idx2iid.read()
+        except:
+            iids = pk.loads(h5.root.meta.idx2iid_pk.read())
+            iids = [iids[e] for e in sorted(iids)]
         n_bins = h5.root.meta.nbins.read()
 
         if not initialized:
