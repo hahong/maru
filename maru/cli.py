@@ -103,14 +103,14 @@ PSINFO2FEAT_USAGE = \
 Converts peristimulus firing information (in .psf.h5) into a feature matrix
 by counting the total number of spikes in time bins.
 
-${PNAME} tbte <tinfo.h5> <output_repr.h5> <t_begins> <t_ends> [opts]
+${PNAME} tbte <input.psf.h5> <output_repr.h5> <t_begins> <t_ends> [opts]
   t_begins: beginnings of reading window (0=stim onset), comma-separated list
   t_ends: ends of reading window, comma-separated, length must be same
           as t_begins
 
-${PNAME} twmp <tinfo.h5> <output_repr.h5> <delta_t> <midpt> [opts]
-  delta_t: reading window width, comma-separated list
-  midpt: mid-point of window, comma-separated
+${PNAME} twmp <input.psf.h5> <output_repr.h5> <widths> <midpts> [opts]
+  widths: reading window width, comma-separated list
+  midpts: mid-point of window, comma-separated
 
 Notes:
 All time values are in ms.
