@@ -7,9 +7,6 @@ Blackrock/Plexon systems.
 
 Installation
 ------------
-This project provides various utility scripts and a Python package that the
-scripts rely on.
-
 To install:
    `python setup.py install`
 
