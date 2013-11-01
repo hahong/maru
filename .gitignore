@@ -6,3 +6,5 @@
 *.so
 *.o
 *.a
+src/*.c
+src/build/
