@@ -127,7 +127,7 @@ def prepare(sel, rh=RI_HIGHER, rl=RI_LOWER, nmax=N_MAXOUT):
     # balance between higher pins and lower pins
     data = {}
     nleft = na + 1
-    print 'pcbout: n_excess =', n_excess
+    print 'maru-mkswcards: n_excess =', n_excess
     for arr in sel:
         if len(arr) > 0:
             nleft -= 1
@@ -275,8 +275,8 @@ def writenet(nets, out):
 # ----------------------------------------------------------------------------
 def main():
     if len(sys.argv) < 3:
-        print 'pcbout.py <0-base selected 128.txt> <output prefix> [opts] ...'
-        print 'pcbout.py: builds netlist files for switching card design.'
+        print 'maru-mkswcards.py <0-base selected 128.txt> <output prefix>'
+        print 'Builds netlist files for designing wire-switching cards.'
         return
 
     inp = sys.argv[1]
@@ -297,7 +297,7 @@ def main():
     # write all
     writenet(nets, out)
 
-    print 'pcbout: done.'
+    print 'maru-mkswcards: done.'
 
 
 if __name__ == '__main__':
