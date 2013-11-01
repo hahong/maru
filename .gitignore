@@ -8,3 +8,4 @@
 *.a
 src/*.c
 src/build/
+build/
