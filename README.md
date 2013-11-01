@@ -12,10 +12,10 @@ This project provides various utility scripts and a Python package that the
 scripts rely on.
 
 To install:
-   python setup.py install
+   `python setup.py install`
 
 To install locally under the home directory:
-   python setup.py install --user
+   `python setup.py install --user`
 
 Note that the package depends on the following Python packages:
   * numpy
@@ -32,6 +32,7 @@ Usage
 -----
 (TBA)
 
+```
         +--------+          +------------------+
         | MWorks |          | BlackRock/Plexon |
         +--------+          +------------------+
@@ -74,7 +75,7 @@ Usage
    |    firing information             |
    +-----------------------------------+
 
-
+```
 
 
 
