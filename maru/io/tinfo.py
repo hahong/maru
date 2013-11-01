@@ -161,23 +161,35 @@ def save_tinfo_core(dat, outfn, n_img=None, n_maxtrial=None, save_spktch=False,
                             (n_maxtrial, str(ch), str(iid))
             # number of actual trials to read in the chunk
             ntr = ntr0 - n_excess
+            # book-keeping stuffs...
+            org[ii, ie, itb:ite] = 0   # mainly for backward compatibility
+            tr[ie, ii] += ntr
+
             # bit-like spike timing info
             tr_bits = np.zeros((ntr, n_bytes * 8), dtype=np.uint8)
 
             # sweep the chunk, and bit-pack the data
             trials = trials[:ntr]
             trials_enum = np.concatenate([[i] * len(e)
-                    for i, e in enumerate(trials)])
+                    for i, e in enumerate(trials)]).astype('int')
             trials = np.concatenate(trials)
 
             # selected bins
             sb = np.round((trials - t_min) / 1000.).astype('int')
             si = np.nonzero((sb >= 0) & (sb < n_bins))[0]
+            if len(si) == 0:
+                # no spikes at all
+                db[ie, ii, itb:ite, :] = 0    # this must match.. (1)
+                continue
+
             sb = sb[si]
             st = trials_enum[si]
             tr_bits[st, sb] = 1   # there was a spike
             spk = np.packbits(tr_bits, axis=1)
+            # finished this image in this electrode; store the data
+            db[ie, ii, itb:ite, :] = spk      # this must match.. (1)
 
+            # keeping foffsets for .nev/.plx files
             if foffsets is not None:
                 foffsets = np.concatenate(foffsets)
                 if len(foffsets) != len(trials):
@@ -192,11 +204,6 @@ def save_tinfo_core(dat, outfn, n_img=None, n_maxtrial=None, save_spktch=False,
                 foffset_tridx.extend(st)
                 foffset_binidx.extend(sb)
                 foffset_pos.extend(foffsets[si])
-
-            # finished this image in this electrode; store the data
-            db[ie, ii, itb:ite, :] = spk
-            org[ii, ie, itb:ite] = 0   # mainly for backward compatibility
-            tr[ie, ii] += ntr
 
     # -- additional movie data conversion
     # XXX: this assumes `multi=False`
