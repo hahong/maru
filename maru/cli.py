@@ -37,8 +37,8 @@ Options:
                              the names
    --wav=<.nev file name>    collects waveform for **spike sorting** with the
                              .nev file.  This produces a specialized outputs.
-   --pkl                     save pickle format as well (HIGHLY DISCOURAGED, and
-                             "--wav" does not support this)
+   --pkl                     save pickle format as well (HIGHLY DISCOURAGED,
+                             and "--wav" does not support this)
 """
 
 SPKSORT_USAGE = \
@@ -96,6 +96,27 @@ sorted spikes as .psf.h5 format.
 ***NOTE: multiple files are not supported yet!!!***
 
 ${PNAME} collate [options] <input1.c2.clu.h5> <output.psf.h5>
+"""
+
+PSINFO2FEAT_USAGE = \
+"""
+Converts peristimulus firing information (in .psf.h5) into a feature matrix
+by counting the total number of spikes in time bins.
+
+${PNAME} tbte <tinfo.h5> <output_repr.h5> <t_begins> <t_ends> [opts]
+  t_begins: beginnings of reading window (0=stim onset), comma-separated list
+  t_ends: ends of reading window, comma-separated, length must be same
+          as t_begins
+
+${PNAME} twmp <tinfo.h5> <output_repr.h5> <delta_t> <midpt> [opts]
+  delta_t: reading window width, comma-separated list
+  midpt: mid-point of window, comma-separated
+
+Notes:
+All time values are in ms.
+
+Options:
+  --preservefmt    do not compact file
 """
 
 
@@ -314,6 +335,47 @@ def spksort_main(args):
         raise ValueError('Invalid mode')
 
     print 'Done.                                '
+    return 0
+
+
+def psinfo2feat_main(argv):
+    from .io import tinfo
+    pname = get_entry_name(argv[0])
+    args, opts = parse_opts2(argv[1:])
+
+    if len(args) != 5:
+        print PSINFO2FEAT_USAGE.replace('${PNAME}', pname)
+        return 1
+
+    mode, ifn, ofn, t1, t2 = args
+    t1 = [int(t) for t in t1.split(',')]
+    t2 = [int(t) for t in t2.split(',')]
+
+    if mode == 'tbte':
+        tbs = t1
+        tes = t2
+        nooversized = False
+    elif mode == 'twmp':
+        tbs = []
+        tes = []
+        for dt in t1:
+            dt2 = dt / 2
+            for mp in t2:
+                tbs.append(mp - dt2)
+                tes.append(mp + dt2)
+        nooversized = True
+    else:
+        print '* unrecognized mode "%s"' % mode
+        return
+
+    preservefmt = False
+    if 'preservefmt' in opts:
+        print '* Preserve format'
+        preservefmt = True
+
+    assert len(tbs) == len(tes)
+    tinfo.tinfo2feat(ifn, ofn, tbs, tes, nooversized=nooversized,
+            preservefmt=preservefmt)
     return 0
 
 
