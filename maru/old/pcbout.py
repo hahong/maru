@@ -86,53 +86,68 @@ def load_selected(inp, arr_name=ARR_NAME, trans=trans_default, transp=trans_pin)
             arr, el0, el1 = trans(el)
             eli = ElInfo(pin=transp(el0), el=el1)
             selected[arr].append(eli)
+
+    for arr in arr_name:
+        print '* %s: n = %d' % (arr, len(selected[arr]))
+
     return selected
 
 # ----------------------------------------------------------------------------
 def prepare(sel, rh=RI_HIGHER, rl=RI_LOWER, nmax=N_MAXOUT):
-    n_higher = 0; n_lower = 0; na = len(sel.keys()); nhalf = nmax/2
+    n_higher = 0; n_lower = 0; nhalf = nmax/2
+    # effective number of array inputs
+    na = sum([len(sel[k]) > 0 for k in sel])  # len(sel.keys())
 
     # estimate inbalance
     for arr in sel:
         a = np.array([eli.pin for eli in sel[arr]])
         nh = np.sum((a >= rh[0]) & (a <= rh[1])) 
         n_higher += nh
-        n_lower += len(arr) - nh
+        n_lower += len(sel[arr]) - nh
     n_excess = n_higher - nhalf
 
     # balance between higher pins and lower pins
     data = {}; nleft = na + 1
     print 'pcbout: n_excess =', n_excess
     for arr in sel:
-        nleft -= 1
-        a = np.array([eli.pin for eli in sel[arr]])
-        ih = np.nonzero((a >= rh[0]) & (a <= rh[1]))[0]; nh = len(ih)
-        il = np.nonzero((a >= rl[0]) & (a <= rl[1]))[0]; nl = len(il)
-        elh = [sel[arr][i] for i in ih]
-        ell = [sel[arr][i] for i in il]
-        
-        if n_excess > 0:
-            # number of items to move to lower
-            nm = min(int(np.round(n_excess/float(nleft))), nhalf - nl)
-            sh = sorted(elh)   # sorted w.r.t pin#
-            high = sh[:-nm]
-            low = ell 
-            mvhl = sh[-nm:]    # things to move from high to low
-            mvlh = []
-            n_excess -= nm
-        elif n_excess < 0:
-            # number of items to move to higher
-            nm = min(int(np.round(-n_excess/float(nleft))), nhalf - nh)
-            sl = sorted(ell)   # sorted w.r.t pin#
-            low = sl[:-nm]
-            high = elh 
-            mvlh = sl[-nm:]    # things to move from low to high
-            mvhl = []
-            n_excess += nm
+        if len(arr) > 0:
+            nleft -= 1
+            a = np.array([eli.pin for eli in sel[arr]])
+            ih = np.nonzero((a >= rh[0]) & (a <= rh[1]))[0]; nh = len(ih)
+            il = np.nonzero((a >= rl[0]) & (a <= rl[1]))[0]; nl = len(il)
+            elh = [sel[arr][i] for i in ih]
+            ell = [sel[arr][i] for i in il]
+            
+            if n_excess > 0:
+                # number of items to move to lower
+                nm = min(int(np.round(n_excess/float(nleft))), nhalf - nl)
+                sh = sorted(elh)   # sorted w.r.t pin#
+                high = sh[:-nm]
+                low = ell 
+                mvhl = sh[-nm:]    # things to move from high to low
+                mvlh = []
+                n_excess -= nm
+            elif n_excess < 0:
+                # number of items to move to higher
+                nm = min(int(np.round(-n_excess/float(nleft))), nhalf - nh)
+                sl = sorted(ell)   # sorted w.r.t pin#
+                low = sl[:-nm]
+                high = elh 
+                mvlh = sl[-nm:]    # things to move from low to high
+                mvhl = []
+                n_excess += nm
+            else:
+                low = ell
+                high = elh
+                mvlh = mvhl = []
         else:
-            low = ell
-            high = elh
-            mvlh = mvhl = []
+            high = []
+            low = []
+            mvlh = []
+            mvhl = []
+
+        assert len(high) + len(low) + len(mvlh) + len(mvhl) == \
+                len(set(high + low + mvlh + mvhl))
         data[arr] = {}
         data[arr]['high'] = high
         data[arr]['low'] = low
