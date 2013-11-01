@@ -275,7 +275,7 @@ def writenet(nets, out):
 # ----------------------------------------------------------------------------
 def main():
     if len(sys.argv) < 3:
-        print 'maru-mkswcards.py <0-base selected 128.txt> <output prefix>'
+        print 'maru-mkswcards <0-base selected 128.txt> <output prefix>'
         print 'Builds netlist files for designing wire-switching cards.'
         return
 
