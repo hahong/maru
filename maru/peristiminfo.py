@@ -1,21 +1,27 @@
+#!/usr/bin/env python
 import numpy as np
+import cPickle as pk
+import tables as tbl
 import sys
+import warnings
 import os
 from multiprocessing import Process, Queue
 from collections import namedtuple
-from mergeutil import Merge, BRReader, PLXReader
+from pymario.brreader import BRReader
+from pymario.plxreader import PLXReader
 from pymworks.data import MWKFile
+from .utils import makeavail, set_new_threshold
+from .merge import Merge
+from .io.tinfo import save_tinfo
 
 C_STIM = '#announceStimulus'
 C_MSG = '#announceMessage'
-
 # by default, do not reject sloppy (time to present > 2 frames) stimuli
 REJECT_SLOPPY = False
 ERR_UTIME_MSG = 'updating main window display is taking longer than two frames'
 # Errors are type 2 in #aanounceStimulus
 ERR_UTIME_TYPE = 2
 
-I_STIM_ID = 2
 T_START = -100000
 T_STOP = 250000
 # one visual stimulus should have one "success" event within
@@ -23,21 +29,272 @@ C_SUCCESS = 'number_of_stm_shown'
 # 250ms time window in order to be considered as valid one.
 T_SUCCESS = 250000
 
-OVERRIDE_DELAY_US = 300
-T_REJECT = 10
-N_REJECT = 50
-DEFAULT_N_PCA = 3
-N_PRE_PT = 11
-SEARCH_RNG = [6, 16]
-
 # if the animal is not working longer than 3s, then don't do readahead
 DIFF_CUTOFF = 3000000
 # maximum readahead: 6s
 MAX_READAHEAD = 6000000
 
+DEFAULT_ELECS = range(1, 97)
+DEFAULT_SAMPLES_PER_SPK = 48
+DEFAULT_MAX_SPKS = 50000000
+
 
 # ----------------------------------------------------------------------------
-# Common functions
+def get_PS_firrate(fn_mwk, fn_out,
+        movie_begin_fname=None, save_pkl=False, **kwargs):
+    """Get spiking data around stimuli presented."""
+
+    # some housekeeping things...
+    kwargs['verbose'] = 2
+    t_start0 = kwargs['t_start0']
+    t_stop0 = kwargs['t_stop0']
+
+    # all_spike[chn_id][img_id]: when the neurons spiked?
+    all_spike = {}
+    all_foffset = {}
+
+    frame_onset = {}
+    movie_iid = None
+    movie_onsets = []
+    movie_onset0 = 0
+
+    for info in getspk(fn_mwk, fn_nev=None, **kwargs):
+        # -- get the metadata. this must be called before other clauses
+        if info['type'] == 'preamble':
+            actvelecs = info['actvelecs']
+            t_adjust = info['t_adjust']
+
+        # -- do some housekeeping things once per each img
+        elif info['type'] == 'begin':
+            t0 = info['t_imgonset']
+            iid = info['imgid']
+
+            # process movie if requested -- tested weakly. expect bugs!
+            if movie_begin_fname is not None:
+                # begin new clip?
+                if movie_begin_fname in iid:
+                    # was there previous clip?
+                    if movie_iid is not None:
+                        if movie_iid not in frame_onset:
+                            frame_onset[movie_iid] = []
+                        frame_onset[movie_iid].append(movie_onsets)
+                    # init for new clip
+                    movie_onsets = []
+                    iid = movie_iid = iid.replace(movie_begin_fname, '')
+                    movie_onset0 = t0
+                    movie_onsets.append(0)
+                elif movie_iid is not None:
+                    movie_onsets.append(t0 - movie_onset0)
+                    continue
+
+            # prepare the t_rel & foffset
+            t_rel = {}
+            foffset = {}
+
+            for ch in actvelecs:
+                t_rel[ch] = []
+                foffset[ch] = []
+
+        # -- put actual spiking info
+        elif info['type'] == 'spike':
+            ch = info['ch']
+            key = ch
+
+            t_rel[key].append(int(info['t_rel']))
+            foffset[key].append(int(info['pos']))
+
+        # -- finalize info for the image
+        elif info['type'] == 'end':
+            for el in actvelecs:
+                key = el
+                if key not in all_spike:
+                    # not using defaultdict here:
+                    # all_spike[key] = defaultdict(list)
+                    all_spike[key] = {}
+                    all_foffset[key] = {}
+                if iid not in all_spike[key]:
+                    all_spike[key][iid] = []
+                    all_foffset[key][iid] = []
+                all_spike[key][iid].append(t_rel[key])
+                all_foffset[key][iid].append(foffset[key])
+
+    # -- done!
+    # flush movie data
+    if movie_iid is not None:
+        if movie_iid not in frame_onset:
+            frame_onset[movie_iid] = []
+        frame_onset[movie_iid].append(movie_onsets)
+
+    # finished calculation....
+    out = {'all_spike': all_spike,
+           't_start': t_start0,
+           't_stop': t_stop0,
+           't_adjust': t_adjust,
+           'actvelecs': actvelecs,
+           'all_foffset': all_foffset,
+           'frame_onset': frame_onset,
+           'filename': fn_mwk}
+    if save_pkl:
+        # old-format: slow and inefficient and not supported
+        fn_out_pkl = fn_out.replace('.h5', '.pkl')
+        if fn_out_pkl == fn_out:
+            fn_out_pkl += '.pkl'
+        pk.dump(out, open(fn_out_pkl, 'wb'))
+    # always save hdf5 format
+    save_tinfo(out, fn_out)
+
+
+# ----------------------------------------------------------------------------
+def get_PS_waveform(fn_mwk, fn_nev, fn_out, movie_begin_fname=None,
+        n_samples=DEFAULT_SAMPLES_PER_SPK, n_max_spks=DEFAULT_MAX_SPKS,
+        **kwargs):
+    """Get waveform data around stimuli presented for later spike sorting.
+    This will give completely different output file format.
+    NOTE: this function is memory intensive!  Will require approximately
+    as much memory as the size of the files."""
+
+    # -- some housekeeping things...
+    kwargs['verbose'] = 2
+    kwargs['only_new_t'] = True
+    t_start0 = kwargs['t_start0']
+    t_stop0 = kwargs['t_stop0']
+
+    iid2idx = {}
+    idx2iid = []
+    ch2idx = {}
+    idx2ch = []
+    n_spks = 0
+
+    # does "n_spks_lim" reach "n_max_spks"?
+    b_warn_max_spks_lim = False
+    # list of image presentations without spikes
+    l_empty_spks = []
+
+    for info in getspk(fn_mwk, fn_nev=fn_nev, **kwargs):
+        # -- get the metadata. this must be called before other clauses
+        if info['type'] == 'preamble':
+            actvelecs = info['actvelecs']
+            t_adjust = info['t_adjust']
+            chn_info = info['chn_info']
+            n_spks_lim = min(info['n_packets'], n_max_spks)
+            print '* n_spks_lim =', n_spks_lim
+
+            for ch in sorted(actvelecs):
+                makeavail(ch, ch2idx, idx2ch)
+
+            # Data for snippets ===
+            # Msnp: snippet data
+            # Msnp_tabs: when it spiked (absolute time)
+            # Msnp_ch: which channel ID spiked?
+            # Msnp_pos: corresponding file position
+            Msnp = np.empty((n_spks_lim, n_samples), dtype='int16')
+            Msnp_tabs = np.empty(n_spks_lim, dtype='uint64')
+            Msnp_ch = np.empty(n_spks_lim, dtype='uint32')
+            Msnp_pos = np.empty(n_spks_lim, dtype='uint64')
+
+            # Data for images ===
+            # Mimg: image indices in the order of presentations
+            # Mimg_tabs: image onset time (absolute)
+            Mimg = []
+            Mimg_tabs = []
+
+        # -- do some housekeeping things once per each img
+        if info['type'] == 'begin':
+            t_abs = info['t_imgonset']
+            iid = info['imgid']
+            i_img = info['i_img']
+
+            makeavail(iid, iid2idx, idx2iid)
+            Mimg.append(iid2idx[iid])
+            Mimg_tabs.append(t_abs)
+            b_no_spks = True
+
+            # process movie if requested
+            if movie_begin_fname is not None:
+                raise NotImplementedError('Movies are not supported yet.')
+
+        # -- put actual spiking info
+        elif info['type'] == 'spike':
+            wav = info['wavinfo']['waveform']
+            t_abs = info['t_abs']
+            i_ch = ch2idx[info['ch']]
+            pos = info['pos']
+
+            Msnp[n_spks] = wav
+            Msnp_tabs[n_spks] = t_abs
+            Msnp_ch[n_spks] = i_ch
+            Msnp_pos[n_spks] = pos
+            b_no_spks = False
+
+            n_spks += 1
+            if n_spks >= n_spks_lim:
+                warnings.warn('n_spks exceedes n_spks_lim! '
+                    'Aborting further additions.')
+                b_warn_max_spks_lim = True
+                break
+
+        elif info['type'] == 'end':
+            if not b_no_spks:
+                continue
+            # if there's no spike at all, list the stim
+            warnings.warn('No spikes are there!       ')
+            l_empty_spks.append(i_img)
+
+    # -- done!
+    # finished calculation....
+    Msnp = Msnp[:n_spks]
+    Msnp_tabs = Msnp_tabs[:n_spks]
+    Msnp_ch = Msnp_ch[:n_spks]
+    Msnp_pos = Msnp_pos[:n_spks]
+
+    Mimg = np.array(Mimg, dtype='uint32')
+    Mimg_tabs = np.array(Mimg_tabs, dtype='uint64')
+
+    filters = tbl.Filters(complevel=4, complib='blosc')
+    t_int16 = tbl.Int16Atom()
+    t_uint32 = tbl.UInt32Atom()
+    t_uint64 = tbl.UInt64Atom()
+
+    h5o = tbl.openFile(fn_out, 'w')
+    CMsnp = h5o.createCArray(h5o.root, 'Msnp', t_int16,
+            Msnp.shape, filters=filters)
+    CMsnp_tabs = h5o.createCArray(h5o.root, 'Msnp_tabs', t_uint64,
+            Msnp_tabs.shape, filters=filters)
+    CMsnp_ch = h5o.createCArray(h5o.root, 'Msnp_ch', t_uint32,
+            Msnp_ch.shape, filters=filters)
+    CMsnp_pos = h5o.createCArray(h5o.root, 'Msnp_pos', t_uint64,
+            Msnp_pos.shape, filters=filters)
+
+    CMsnp[...] = Msnp
+    CMsnp_tabs[...] = Msnp_tabs
+    CMsnp_ch[...] = Msnp_ch
+    CMsnp_pos[...] = Msnp_pos
+
+    h5o.createArray(h5o.root, 'Mimg', Mimg)
+    h5o.createArray(h5o.root, 'Mimg_tabs', Mimg_tabs)
+
+    meta = h5o.createGroup('/', 'meta', 'Metadata')
+    h5o.createArray(meta, 't_start0', t_start0)
+    h5o.createArray(meta, 't_stop0', t_stop0)
+    h5o.createArray(meta, 't_adjust', t_adjust)
+    h5o.createArray(meta, 'chn_info_pk', pk.dumps(chn_info))
+    h5o.createArray(meta, 'kwargs_pk', pk.dumps(kwargs))
+
+    h5o.createArray(meta, 'idx2iid', idx2iid)
+    h5o.createArray(meta, 'iid2idx_pk', pk.dumps(iid2idx))
+    h5o.createArray(meta, 'idx2ch', idx2ch)
+    h5o.createArray(meta, 'ch2idx_pk', pk.dumps(ch2idx))
+
+    # some error signals
+    h5o.createArray(meta, 'b_warn_max_spks_lim', b_warn_max_spks_lim)
+    if len(l_empty_spks) > 0:
+        h5o.createArray(meta, 'l_empty_spks', l_empty_spks)
+
+    h5o.close()
+
+
+# ----------------------------------------------------------------------------
+# Other support functions
 def xget_events(mf, **kwargs):
     """Memory saving trick"""
     def xloader(q, mf, kwargs):
@@ -87,14 +344,20 @@ def xget_events_readahead(mf, code, time_range, readahead=15000000,
         return _ra[code][ib:ie], last
     else:
         return _ra[code][ib:ie]
-
-
 xget_events_readahead.trange = {}
 xget_events_readahead.readahead = {}
 xget_events_readahead.readahead_t = {}
 
 
-# ----------------------------------------------------------------------------
+def load_spike_data(neu_filename):
+    ext = os.path.splitext(neu_filename)[1]
+    if ext.lower() == '.nev':
+        nf = BRReader(neu_filename)
+    else:
+        nf = PLXReader(neu_filename)
+    return nf
+
+
 def get_stim_info(mf, c_stim=C_STIM, extinfo=False,
         dynstim='ds_9999', rotrmn=180, blank='zb_99999',
         exclude_img=None):
@@ -169,45 +432,7 @@ def get_stim_info(mf, c_stim=C_STIM, extinfo=False,
 
 
 # ----------------------------------------------------------------------------
-def load_spike_data(neu_filename):
-    ext = os.path.splitext(neu_filename)[1]
-    if ext.lower() == '.nev':
-        nf = BRReader(neu_filename)
-    else:
-        nf = PLXReader(neu_filename)
-    return nf
-
-
-# ----------------------------------------------------------------------------
-def seq_search(iterable, target):
-    """do sequential search"""
-    for i, e in enumerate(iterable):
-        if e != target:
-            continue
-        return i
-    return None
-
-
-# ----------------------------------------------------------------------------
-def sort_uniq(base, *args):
-    """sort and remove duplicates based on `base` and apply on to `args`"""
-    if len(args) == 0:
-        return None
-    res = []
-    # sort
-    si = np.argsort(base)
-    base = np.array(base[si])
-    for arg in args:
-        res.append(np.array(arg[si]))
-    # remove duplicates
-    di = np.nonzero(np.diff(base) == 0)[0]
-    si = list(set(range(len(base))) - set(list(di)))
-    for i in xrange(len(res)):
-        res[i] = np.array(res[i][si])
-    return res
-
-
-# ----------------------------------------------------------------------------
+# Peri-stimulus info related
 def getspk(fn_mwk, fn_nev=None, override_elecs=None,
         ch_shift=None, ign_unregistered=False,
         override_delay_us=None, verbose=False,
@@ -438,226 +663,3 @@ def getspk(fn_mwk, fn_nev=None, override_elecs=None,
         # -- finished sweeping all spikes. yield end of image info
         infoimg['type'] = 'end'
         yield infoimg
-
-
-def invalidate_artifacts(buf0, t_reject=T_REJECT,
-        n_reject=N_REJECT, verbose=True):
-    """If there are more than `N_REJET` spikes within `T_REJECT`us window,
-    invalidate all of them.
-    """
-    ti_all = [(b['timestamp'], i) for i, b in enumerate(buf0)]
-    ti_all = sorted(ti_all)
-    t_all = np.array([t[0] for t in ti_all])
-    i_all = [t[1] for t in ti_all]
-
-    nb = len(buf0)
-    ri = range(nb)
-    i = 0
-    while i < nb - 1:
-        ii = []
-        t0 = t_all[i]
-        for j in xrange(i + 1, nb):
-            if t_all[j] < t0 + t_reject:
-                ii.append(j)
-            else:
-                break
-        i = j
-
-        if len(ii) < n_reject:
-            continue
-        for ix in ii:
-            try:
-                ri.remove(i_all[ix])
-            except ValueError:
-                pass
-
-    buf = [buf0[i] for i in ri]
-    if verbose and len(buf) != nb:
-        print '* Rejecting', nb - len(buf), 'spikes.'
-    return buf
-
-
-def set_new_threshold(wavform, thr, n_pre=N_PRE_PT, rng=SEARCH_RNG, i_chg=20):
-    """Set new threshold `thr`.
-    If the `waveform` cannot pass `thr` returns None.
-    The new waveform is re-aligned based on the steepest point.
-    The returned new waveform has `n_pre` points before the alignment point.
-    """
-    wav = np.array(wavform)
-    sgn = np.sign(thr)
-    if np.max(wav[rng[0]:rng[1]] * sgn) < np.abs(thr): return None   # reject
-
-    """ NOT USED -- GIVES IMPRECISE RESULT
-    # -- align: find the steepest point having the same sign as `sgn`
-    df = np.diff(wav)
-    si = np.argsort(-sgn * df)   # reverse sorted
-    for i in si:
-        if np.sign(wav[i]) == sgn: break
-    """
-    # -- align: find the point where waveform crosses `thr`
-    n = len(wav)
-    for i in range(n - 1):
-        if sgn * wav[i] <= sgn * thr and sgn * thr <= sgn * wav[i + 1]:
-            break
-    if i == n - 2:
-        # although i could be n - 2, it's highly likely an artifact
-        return None
-    n_shift = n_pre - i - 1    # > 0: right shift, < 0: left shift
-    if n_shift == 0:
-        return wav
-
-    wavnew = np.empty(wav.shape)
-    wavnew[n_shift:] = wav[:-n_shift]   # PBC shifting
-    wavnew[:n_shift] = wav[-n_shift:]
-
-    # -- done: but if the spike doesn't change its sign
-    #    within `i_chg`, reject.
-    if np.max(-sgn * wavnew[n_pre:i_chg]) < 0:
-        return None
-
-    """ DEBUG
-    if np.abs(n_shift) > 3:
-        print '!!!', n_shift, '/', i, '/', n
-        print '---',  np.max(-sgn * wavnew[n_pre:i_chg])
-        print list(wav)
-        print list(wavnew)
-    """
-
-    return wavnew
-
-
-# -----------------------------------------------------------------------------
-def parse_opts(opts0):
-    """Parse the options in the command line.  This somewhat
-    archaic function mainly exists for backward-compatability."""
-    opts = {}
-    # parse the stuff in "opts"
-    for opt in opts0:
-        parsed = opt.split('=')
-        key = parsed[0].strip()
-        if len(parsed) > 1:
-            # OLD: cmd = parsed[1].strip()
-            cmd = '='.join(parsed[1:]).strip()
-        else:
-            cmd = ''
-        opts[key] = cmd
-
-    return opts
-
-
-def parse_opts2(tokens, optpx='--', argparam=False):
-    """A newer option parser. (from perf102)"""
-    opts0 = []
-    args = []
-    n = len(optpx)
-
-    for token in tokens:
-        if token[:2] == optpx:
-            opts0.append(token[n:])
-        else:
-            if argparam:
-                token = token.split('=')
-            args.append(token)
-
-    opts = parse_opts(opts0)
-
-    return args, opts
-
-
-def parse_opts_adapter(tokens, delim, optpx='--', argparam=False):
-    """Adapter to support both old- and new-style options"""
-    if any([t.startswith(optpx) for t in tokens]):
-        # new style
-        args, opts = parse_opts2(tokens, optpx=optpx, argparam=argparam)
-    else:
-        # old style
-        args = tokens[:delim]
-        opts = parse_opts(tokens[delim:])
-    return args, opts
-
-
-def makeavail(sth, sth2idx, idx2sth, query=None):
-    if sth not in sth2idx:
-        if query is not None and not query(sth):
-            return
-        sth2idx[sth] = len(idx2sth)
-        idx2sth.append(sth)
-
-
-def prep_files(flist, sep=',', extchk=True):
-    flist = flist.split(sep)
-    if flist[0][0] == '+':
-        flist = [f.strip() for f in open(flist[0][1:]).readlines()]
-    if extchk:
-        assert all([os.path.exists(f) for f in flist])
-
-    return flist
-
-
-def prepare_save_dir(sav_dir):
-    if sav_dir != '' and not os.path.exists(sav_dir):
-        try:
-            os.makedirs(sav_dir)
-        # in massively-parallel env, it is possible that
-        # the sav_dir is created after os.path.exists() check.
-        # We just ignore if makedirs fails.
-        except Exception:
-            pass
-
-
-def detect_cpus():
-    # Linux, Unix and MacOS:
-    if hasattr(os, "sysconf"):
-        if 'SC_NPROCESSORS_ONLN' in os.sysconf_names:
-            # Linux & Unix:
-            ncpus = os.sysconf("SC_NPROCESSORS_ONLN")
-        if isinstance(ncpus, int) and ncpus > 0:
-            return ncpus
-    else:   # OSX:
-        return int(os.popen2("sysctl -n hw.ncpu")[1].read())
-    # Windows:
-    if 'NUMBER_OF_PROCESSORS' in os.environ:
-        ncpus = int(os.environ["NUMBER_OF_PROCESSORS"])
-        if ncpus > 0:
-            return ncpus
-    return 1
-
-
-# -----------------------------------------------------------------------------
-# fastnorm: from Nicolas' code
-def fastnorm(x):
-    xv = x.ravel()
-    return np.dot(xv, xv) ** 0.5
-
-
-# fastsvd: from Nicolas' code
-def fastsvd(M):
-    h, w = M.shape
-    # -- thin matrix
-    if h >= w:
-        # subspace of M'M
-        U, S, V = np.linalg.svd(np.dot(M.T, M))
-        U = np.dot(M, V.T)
-        # normalize
-        for i in xrange(w):
-            S[i] = fastnorm(U[:, i])
-            U[:, i] = U[:, i] / S[i]
-    # -- fat matrix
-    else:
-        # subspace of MM'
-        U, S, V = np.linalg.svd(np.dot(M, M.T))
-        V = np.dot(U.T, M)
-        # normalize
-        for i in xrange(h):
-            S[i] = fastnorm(V[i])
-            V[i, :] = V[i] / S[i]
-    return U, S, V
-
-
-def pca_eigvec(M, pca_threshold=DEFAULT_N_PCA):
-    U, S, V = fastsvd(M)
-    eigvectors = V.T
-    eigvectors = eigvectors[:, :pca_threshold]
-    # this gives PCA:
-    # M = np.dot(M, eigvectors)
-    return eigvectors

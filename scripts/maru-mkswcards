@@ -10,7 +10,8 @@ RI_LOWER = [65, 112]        # inclusive
 RI_HIGHER = [185, 232]      # inclusive
 RO_LOWER = [1, 64]          # actual output pin number inclusive
 RO_HIGHER = [121, 184]      # idem
-N_MAXOUT = 128              # maximum electrodes to take (must be multiples of 2)
+N_MAXOUT = 128              # maximum electrodes to take (must mult. of 2)
+assert N_MAXOUT % 2 == 0
 EDN_TEMPL_OPEN = \
 """(edif scard  (edifVersion 2 0 0)
     (edifLevel 0)
@@ -27,7 +28,7 @@ EDN_TEMPL_CLOSE = \
             )
         )
     )
-) 
+)
 """
 EDN_TEMPL_NET = \
 """
@@ -43,42 +44,56 @@ EDN_TEMPL_NET = \
 # el: 1-based electrode id in the patient cable (1 <= el <= 96)
 ElInfo = namedtuple('ElInfo', 'pin el')
 
+
 # ----------------------------------------------------------------------------
 def trans_default(el, arr_name=ARR_NAME):
     """
-    trans_default(el, arr_name=ARR_NAME): get 0-based/1-based electrode number for array and array name
+    get 0-based/1-based electrode number for array and array name
     el: should be 0-based!
     """
     if el < 0 or el >= 288:
-        raise ValueError, 'wrong electrode number in the input file!'
-    arr = arr_name[el/96]
+        raise ValueError('wrong electrode number in the input file!')
+    arr = arr_name[el / 96]
     el %= 96
-    # array number, 0-based electrode number in the bank, 1-based electrode number in the bank
+    # array number, 0-based electrode number in the bank,
+    # 1-based electrode number in the bank
     return arr, el, el + 1
+
 
 def trans_pin(ch):
     """
-    trans_pin(ch): trnaslate 0-based electrode id into pin number in the DDR240 connector
+    trnaslate 0-based electrode id into pin number in the DDR240 connector
     """
     # ch should be 0-based.
-    if ch <= 47: return ch + 65
-    elif ch >= 48 and ch <= 95: return 280 - ch
-    raise ValueError, 'wrong input electrode number!'
+    if ch <= 47:
+        return ch + 65
+    elif ch >= 48 and ch <= 95:
+        return 280 - ch
+    raise ValueError('wrong input electrode number!')
+
 
 def trans_outpin(pin):
     """
-    trans_outpin(pin): translate pin number in the DDR240 connector into 1-based
+    translate pin number in the DDR240 connector into 1-based
     output electrode id.
     """
-    if 33 <= pin and pin <= 64: return 65 - pin             # bank A
-    elif 1 <= pin and pin <= 32: return 33 - pin + 32       # bank B
-    elif 121 <= pin and pin <= 152: return pin - 120 + 64   # bank C
-    elif 153 <= pin and pin <= 184: return pin - 152 + 96   # bank D
-    else: raise ValueError, 'wrong input pin number!'
+    if 33 <= pin and pin <= 64:
+        return 65 - pin          # bank A
+    elif 1 <= pin and pin <= 32:
+        return 33 - pin + 32    # bank B
+    elif 121 <= pin and pin <= 152:
+        return pin - 120 + 64   # bank C
+    elif 153 <= pin and pin <= 184:
+        return pin - 152 + 96   # bank D
+    else:
+        raise ValueError('wrong input pin number!')
 
-def load_selected(inp, arr_name=ARR_NAME, trans=trans_default, transp=trans_pin):
+
+def load_selected(inp, arr_name=ARR_NAME,
+        trans=trans_default, transp=trans_pin):
     selected = {}
-    for arr in arr_name: selected[arr] = []
+    for arr in arr_name:
+        selected[arr] = []
 
     for line in open(inp).readlines():
         for el in line.strip().split():
@@ -92,47 +107,53 @@ def load_selected(inp, arr_name=ARR_NAME, trans=trans_default, transp=trans_pin)
 
     return selected
 
+
 # ----------------------------------------------------------------------------
 def prepare(sel, rh=RI_HIGHER, rl=RI_LOWER, nmax=N_MAXOUT):
-    n_higher = 0; n_lower = 0; nhalf = nmax/2
+    n_higher = 0
+    n_lower = 0
+    nhalf = nmax / 2
     # effective number of array inputs
     na = sum([len(sel[k]) > 0 for k in sel])  # len(sel.keys())
 
     # estimate inbalance
     for arr in sel:
         a = np.array([eli.pin for eli in sel[arr]])
-        nh = np.sum((a >= rh[0]) & (a <= rh[1])) 
+        nh = np.sum((a >= rh[0]) & (a <= rh[1]))
         n_higher += nh
         n_lower += len(sel[arr]) - nh
     n_excess = n_higher - nhalf
 
     # balance between higher pins and lower pins
-    data = {}; nleft = na + 1
+    data = {}
+    nleft = na + 1
     print 'pcbout: n_excess =', n_excess
     for arr in sel:
         if len(arr) > 0:
             nleft -= 1
             a = np.array([eli.pin for eli in sel[arr]])
-            ih = np.nonzero((a >= rh[0]) & (a <= rh[1]))[0]; nh = len(ih)
-            il = np.nonzero((a >= rl[0]) & (a <= rl[1]))[0]; nl = len(il)
+            ih = np.nonzero((a >= rh[0]) & (a <= rh[1]))[0]
+            nh = len(ih)
+            il = np.nonzero((a >= rl[0]) & (a <= rl[1]))[0]
+            nl = len(il)
             elh = [sel[arr][i] for i in ih]
             ell = [sel[arr][i] for i in il]
-            
+
             if n_excess > 0:
                 # number of items to move to lower
-                nm = min(int(np.round(n_excess/float(nleft))), nhalf - nl)
+                nm = min(int(np.round(n_excess / float(nleft))), nhalf - nl)
                 sh = sorted(elh)   # sorted w.r.t pin#
                 high = sh[:-nm]
-                low = ell 
+                low = ell
                 mvhl = sh[-nm:]    # things to move from high to low
                 mvlh = []
                 n_excess -= nm
             elif n_excess < 0:
                 # number of items to move to higher
-                nm = min(int(np.round(-n_excess/float(nleft))), nhalf - nh)
+                nm = min(int(np.round(-n_excess / float(nleft))), nhalf - nh)
                 sl = sorted(ell)   # sorted w.r.t pin#
                 low = sl[:-nm]
-                high = elh 
+                high = elh
                 mvlh = sl[-nm:]    # things to move from low to high
                 mvhl = []
                 n_excess += nm
@@ -155,15 +176,16 @@ def prepare(sel, rh=RI_HIGHER, rl=RI_LOWER, nmax=N_MAXOUT):
         data[arr]['mvhl'] = mvhl
 
     if n_excess != 0:
-        raise ValueError, 'cannot realize wiring network!'
-    
+        raise ValueError('cannot realize wiring network!')
+
     return data
 
 
 # ----------------------------------------------------------------------------
 def makenet(data, rl=RO_LOWER, rh=RO_HIGHER):
     # left lower pins left, left higher pins left
-    ll = range(rl[0], rl[1]+1); lh = range(rh[0], rh[1]+1)
+    ll = range(rl[0], rl[1] + 1)
+    lh = range(rh[0], rh[1] + 1)
     # nets: realized network. net = {'A': [(from, to), ], ...}
     nets = {}
 
@@ -172,13 +194,14 @@ def makenet(data, rl=RO_LOWER, rh=RO_HIGHER):
         net = []
 
         # do lower output pins first ------
-        a = sorted(d['mvhl'], reverse=True) + sorted(d['low'], reverse=True)  # sorted w.r.t pin#
+        # sorted w.r.t pin#
+        a = sorted(d['mvhl'], reverse=True) + sorted(d['low'], reverse=True)
         for ch in a:
             outpin = ll.pop(0)
             net.append((ch, outpin))
 
         # do higher pins ------------------
-        a = sorted(d['mvlh'], reverse=True) + sorted(d['high'], reverse=True) # sorted w.r.t pin#
+        a = sorted(d['mvlh'], reverse=True) + sorted(d['high'], reverse=True)
         for ch in a:
             outpin = lh.pop(0)
             net.append((ch, outpin))
@@ -196,10 +219,16 @@ def writenet_edif(net, out):
     netid = 0
     for eli, outp in net:
         inp = eli.pin
-        if inp <= 112: inbase = 'U1'
-        else: inp -= 120; inbase = 'U2'
-        if outp <= 112: outbase = 'U1'
-        else: outp -= 120; outbase = 'U2'
+        if inp <= 112:
+            inbase = 'U1'
+        else:
+            inp -= 120
+            inbase = 'U2'
+        if outp <= 112:
+            outbase = 'U1'
+        else:
+            outp -= 120
+            outbase = 'U2'
         netid += 1
 
         outs = EDN_TEMPL_NET
@@ -242,6 +271,7 @@ def writenet(nets, out):
         print '  - Out - All:', all_out - all_el
         print '  - All - Out:', all_el - all_out
 
+
 # ----------------------------------------------------------------------------
 def main():
     if len(sys.argv) < 3:
@@ -256,8 +286,10 @@ def main():
     # selected = {`electrode name`: [el 1, el 2, ...], ...}
     selected = load_selected(inp)
 
-    # preparation: balance the number of lower (pins 1-64) vs higher pins (pins 121-184)
-    # selected = {`electrode name`: {'high': [el 1, ...], 'low': [el ...]}, ...}
+    # preparation: balance the number of lower (pins 1-64) vs
+    #              higher pins (pins 121-184)
+    # selected = {`electrode name`: {'high': [el 1, ...],
+    #             'low': [el ...]}, ...}
     netsraw = prepare(selected)
 
     # determine links
@@ -266,7 +298,7 @@ def main():
     writenet(nets, out)
 
     print 'pcbout: done.'
-    
+
 
 if __name__ == '__main__':
     main()
