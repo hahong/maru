@@ -116,7 +116,7 @@ Notes:
 All time values are in ms.
 
 Options:
-  --preservefmt    do not compact file
+  --nopreservefmt    Compact output feature matrix and metadata
 """
 
 
@@ -368,10 +368,10 @@ def psinfo2feat_main(argv):
         print '* unrecognized mode "%s"' % mode
         return
 
-    preservefmt = False
-    if 'preservefmt' in opts:
-        print '* Preserve format'
-        preservefmt = True
+    preservefmt = True
+    if 'nopreservefmt' in opts:
+        print '* Not preserving format'
+        preservefmt = False
 
     assert len(tbs) == len(tes)
     tinfo.tinfo2feat(ifn, ofn, tbs, tes, nooversized=nooversized,

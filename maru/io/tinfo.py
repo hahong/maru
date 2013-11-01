@@ -339,7 +339,7 @@ def save_tinfo(dat, outfn, n_img=None, n_maxtrial=None,
         save_tinfo_cleanup()
 
 
-def tinfo2feat(ifn, ofn, tbs, tes, nooversized=True, preservefmt=False):
+def tinfo2feat(ifn, ofn, tbs, tes, nooversized=True, preservefmt=True):
     h5 = tables.openFile(ifn)
     si = h5.root.spkt_img
     if preservefmt:
