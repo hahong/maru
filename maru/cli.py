@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 import warnings
+import tables
 import os
-from .utils import parse_opts_adapter, parse_opts2
+from .utils import parse_opts_adapter, parse_opts2, prep_files
 
 MERGE_USAGE = \
 """
@@ -103,12 +104,12 @@ PSINFO2FEAT_USAGE = \
 Converts peristimulus firing information (in .psf.h5) into a feature matrix
 by counting the total number of spikes in time bins.
 
-${PNAME} tbte <input.psf.h5> <output_repr.h5> <t_begins> <t_ends> [opts]
+${PNAME} tbte [options] <input.psf.h5> <output_repr.h5> <t_begins> <t_ends>
   t_begins: beginnings of reading window (0=stim onset), comma-separated list
   t_ends: ends of reading window, comma-separated, length must be same
           as t_begins
 
-${PNAME} twmp <input.psf.h5> <output_repr.h5> <widths> <midpts> [opts]
+${PNAME} twmp [options] <input.psf.h5> <output_repr.h5> <widths> <midpts>
   widths: reading window width, comma-separated list
   midpts: mid-point of window, comma-separated
 
@@ -117,6 +118,25 @@ All time values are in ms.
 
 Options:
   --nopreservefmt    Compact output feature matrix and metadata
+"""
+
+FEATCONCAT_USAGE = \
+"""
+${PNAME} [options] <input.feat.h5 file or +list.lst> <output.h5>
+Concatenate multiple feat.h5 files into a single .h5 file.
+Multiple input files can be specified by either a comma separated list (without
+spaces) or a list file.
+
+Options:
+--basename                         Only take basename of image ids
+--include_iid=<iids or +list.lst>  Image ids to be included (others are
+                                       discarded)
+--include_lbl=<python expr>        Labels to be included (others are discarded)
+--outrule=<chconv rule name>       Set out channel rule
+--fnrule=<rules or +list.lst>      Set rules for each file
+--trim                             Trim output file
+--backtrim                         Back-trim output file (assume trim)
+--evoked=<blank file pattern>      Compute only evoked
 """
 
 
@@ -376,6 +396,135 @@ def psinfo2feat_main(argv):
     assert len(tbs) == len(tes)
     tinfo.tinfo2feat(ifn, ofn, tbs, tes, nooversized=nooversized,
             preservefmt=preservefmt)
+    return 0
+
+
+def featconcat_main(argv):
+    from .io.featconcat import featconcat, ELMAP, ELRULEORDER
+    pname = get_entry_name(argv[0])
+    args, opts = parse_opts2(argv[1:])
+    if len(args) != 2:
+        print FEATCONCAT_USAGE.replace('${PNAME}', pname)
+        return 1
+
+    ifns, ofn = args
+    ifns = prep_files(ifns)
+
+    # -- process options
+    basename = False
+    if 'basename' in opts:
+        basename = True
+        print '** Taking basename'
+
+    sortmetanum = False
+    if 'sortmetanum' in opts:
+        sortmetanum = True
+        print '** Numeric sorting'
+
+    include_iid = None
+    if 'include_iid' in opts:
+        include_iid = prep_files(opts['include_iid'], extchk=False)
+        print '** Only include these iids:', include_iid
+
+    fnrule = None
+    if 'fnrule' in opts:
+        fnrule = [eval(l) for l in prep_files(opts['fnrule'], extchk=False)]
+        print '** File proc rule:', fnrule
+
+    include_lbl = None
+    if 'include_lbl' in opts:
+        include_lbl = eval(opts['include_lbl'])
+        print '** Only include these lbls:', include_lbl
+
+    trim = False
+    if 'trim' in opts:
+        trim = True
+        print '** Trim output file'
+
+    backtrim = False
+    if 'backtrim' in opts:
+        backtrim = True
+        trim = True
+        print '** Backtrim output file'
+
+    # -- in/out rule kludges
+    outrule = 'default'
+    inrule = None
+    if 'inoutrulech' in opts:
+        inoutrulech = opts['inoutrulech']
+        if inoutrulech == 'addch':
+            # XXX: super kludge -- for NSP2
+            assert len(ifns) == 2
+
+            h5r = tables.openFile(ifns[0])
+            nch1 = h5r.root.spk.shape[-1]
+            h5r.close()
+
+            h5r = tables.openFile(ifns[1])
+            nch2 = h5r.root.spk.shape[-1]
+            h5r.close()
+
+            print '** in-out-rule #ch:', nch1, nch2
+            ELMAP['custom'] = range(nch1 + nch2)
+            ELRULEORDER.append('custom')
+            inrule = outrule = 'custom'
+
+            fnrule = [(range(nch1), range(nch1)), (range(nch2), range(nch1,
+                nch1 + nch2))]
+
+        else:
+            if inoutrulech == 'detect':
+                h5r = tables.openFile(ifns[0])
+                nch = h5r.root.spk.shape[-1]
+                h5r.close()
+            else:
+                nch = int(inoutrulech)
+            print '** in-out-rule #ch:', nch
+            ELMAP['custom'] = range(nch)
+            ELRULEORDER.append('custom')
+            inrule = outrule = 'custom'
+
+    if 'outrule' in opts:
+        outrule = opts['outrule']
+        print '** Outrule:', outrule
+
+        if '+' in outrule:
+            mapping = range(int(outrule.split('+')[0]),
+                    int(outrule.split('+')[1]))
+            ELMAP['customout'] = mapping
+            ELRULEORDER.append('customout')
+            outrule = 'customout'
+
+    if 'inrule' in opts:
+        inrule = opts['inrule']
+        print '** Inrule:', inrule
+
+        if '+' in inrule:
+            mapping = range(int(inrule.split('+')[0]),
+                    int(inrule.split('+')[1]))
+            ELMAP['customin'] = mapping
+            ELRULEORDER.append('customin')
+            inrule = 'customin'
+
+    # -- done
+
+    evoked = None
+    if 'evoked' in opts:
+        evoked = opts['evoked']
+        if ',' in evoked:
+            evoked = evoked.split(',')
+        assert evoked != ''
+        print '** Evoked with blank file pattern:', evoked
+
+    whitened = False
+    if 'whitened' in opts:
+        whitened = True
+        print '** Whitened'
+
+    featconcat(ifns, ofn, basename=basename, include_iid=include_iid,
+            include_lbl=include_lbl, trim=trim, backtrim=backtrim,
+            outrule=outrule, evoked=evoked, whitened=whitened, fnrule=fnrule,
+            inrule=inrule, sortmetanum=sortmetanum)
     return 0
 
 
