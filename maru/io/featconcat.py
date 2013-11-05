@@ -55,7 +55,7 @@ ELMAP['_S110204_'] = [101, 103, 104, 105, 106, 107, 117, 118, 121, 122, 123,
         266, 268, 269, 272, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283,
         284, 285, 286, 287, 125, 158, 160, 166, 172, 190, 191]
 ELMAP['_AMP'] = range(96 * 3)
-ELMAP['default'] = range(96 * 3)
+ELMAP['default'] = ELMAP['_AMP']
 ELMAP['pooled_all'] = range(128 + 96 * 3)
 ELMAP['pooled_P58'] = range(128) + [e + 128 for e in ELMAP['_S110720P58']]
 # must update this one:
