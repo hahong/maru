@@ -188,8 +188,8 @@ def plot_all(db, pp, n_bins=None, t_begin=-100000, log='log.tmp',
 
     # PSTH for best images for each ch
     d = 10
-    t2 = np.zeros(n_bins / d)
-    B2 = np.zeros((n_elec, n_bins / d))
+    t2 = np.zeros(int(np.ceil(n_bins / float(d))))
+    B2 = np.zeros((n_elec, int(np.ceil(n_bins / float(d)))))
     for i, s in enumerate(range(0, n_bins, d)):
         e = s + d
         t2[i] = np.mean(t[s:e])

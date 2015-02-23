@@ -87,8 +87,9 @@ def save_tinfo_core(dat, outfn, n_img=None, n_maxtrial=None, save_spktch=False,
         n_elec = len(dat['actvelecs'])
     if n_maxtrial is None:
         el0 = dat['all_spike'].keys()[0]
-        ii0 = dat['all_spike'][el0].keys()[0]
-        n_maxtrial = len(dat['all_spike'][el0][ii0]) + n_slack
+        iis0 = dat['all_spike'][el0].keys()[0]
+        n_maxtrial = max([len(dat['all_spike'][el0][ii0])
+                          for ii0 in iis0]) + n_slack
     if t_min is None:
         t_min = dat['t_start']
     if t_max is None:
