@@ -558,7 +558,7 @@ def getspk(fn_mwk, fn_nev=None, override_elecs=None,
             readaheads[i_cnkbegin:i] = t0p - t0b + t_diff
             i_cnkbegin = i
             continue
-    readaheads[i_cnkbegin:] = t0 - t0b + t_diff
+        readaheads[i_cnkbegin:] = t0 - t0b + t_diff
 
     # -- iter over all valid stims
     te_prev = -1
